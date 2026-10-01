@@ -38,11 +38,31 @@ The layers were picked by cross-validation. The five predictions are combined wi
 
 The 37 training clips labelled 0 are pure noise and are left out of training. The test set has none of them.
 
-## What we learned
+## Maths and statistics
 
-- **Audio matters even though only grammar is scored.** Transcript-only models reached CV RMSE 0.60; adding audio brought it to 0.48. The audio models hear what was actually said, before speech recognition tidies it up.
-- **Grammar-correction features did not help.** We corrected each transcript with CoEdIT and an LLM and counted the edits. The counts correlate with the score, but they added nothing on top of the embeddings.
-- **More models was not better.** A 13-model stack gave the same predictions as these five. Several changes improved cross-validation slightly but scored worse on the leaderboard, so we kept the simplest version that did well on both.
+**Metric.** RMSE = √(mean of (predicted − true)²). Always predicting the average score gives RMSE 1.014 (the standard deviation of the labels), so that is the baseline to beat.
+
+**Validation.** 5-fold cross-validation, stratified by score level so every fold has the same mix of scores, repeated with 3 different shuffles. Every training clip gets an out-of-fold prediction from models that never saw it, and these are averaged over the 3 repeats. The test prediction is the average of all 15 fitted models.
+
+**Choosing layers.** Each embedding model has 25 to 33 layers. For each layer we fitted a Ridge model and kept the layer with the lowest cross-validated RMSE. Picking the best layer on the same data makes its score slightly optimistic (about 0.01).
+
+**Models.**
+- **SVR** (support vector regression) with an RBF kernel, on standardised features: C = 10, ε = 0.1. It ignores errors smaller than ε and can fit curved relationships.
+- **Ridge**: linear regression with an L2 penalty. The penalty strength α is chosen from 10⁻¹ to 10⁶ by leave-one-out cross-validation.
+
+**Blending.** Non-negative least squares on the five out-of-fold predictions: score = Σ wᵢ · predictionᵢ + b, with every wᵢ ≥ 0. The blend's own score comes from a separate 5-fold split, so it is also judged on clips it did not see.
+
+**Feature checks.** Spearman correlation of each handcrafted feature with the score. Strongest: grammaticality from the CoLA classifier (ρ = 0.50), vocabulary variety (0.41), and disagreement between the Whisper and wav2vec2 transcripts (−0.42).
+
+**Train vs test.** A classifier trained to tell training clips from test clips does so with AUC 0.84 on audio embeddings and 0.78 on text embeddings, so the test set clearly differs from the training set. By resampling the training predictions, we estimated that with 216 test clips, the leaderboard gap between two similar versions can swing by about ±0.01 by chance. Because of both, cross-validation alone could not choose between versions that were close, so the final choice was made on the Kaggle score.
+
+## Experiments
+
+**1. Grammar error correction (GEC).** Our own idea: if the raters score grammar, count how many fixes the transcript needs. Each transcript was corrected by two models (CoEdIT, from Grammarly, and the LLM Qwen2.5-7B), and ERRANT counted the edits by type (verb tense, articles, prepositions…), ignoring spelling and punctuation. The edit rate correlates with the score (ρ ≈ −0.54), and on its own it predicts the score with RMSE 0.81. But on top of the other models it improved cross-validation by only 0.001, so we dropped it.
+
+**2. Transcript only.** Since only grammar is scored, we tried using nothing but the transcript. Cross-validation RMSE got worse: 0.60, against 0.48 with the audio. Speech recognition quietly fixes some of the speaker's mistakes, while the audio models still hear what was actually said, so we kept the audio.
+
+**3. Whisper encoder and extra layers.** Adding Whisper encoder (and Qwen) embeddings next to WavLM and RoBERTa brought the Kaggle score to 0.3492, our best. Adding a second, middle layer of each audio model looked even better in cross-validation (0.4695), but scored 0.3653 on Kaggle. A simpler 3-model average also looked fine in cross-validation but scored 0.3563. Based on the Kaggle scores, we kept the five-model version.
 
 ## How to run
 
